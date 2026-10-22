@@ -1,0 +1,43 @@
+// Saving this file writes each task as a .sh script for Linux and macOS and a .cmd script for
+// Windows in this folder, and those scripts run anywhere without Crimson Build.
+{
+	"env": {
+		"PROGRAM": "crimson-build",
+		"VERSION": "0.1.0",
+		"PREFIX": "${HOME}/.local",
+		"STD": "gnu11",
+		"WARN": "-Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter",
+		"PKGS": "glib-2.0 gio-2.0"
+	},
+	"tasks": {
+		"build": {
+			"description": "Build the crimson-build command",
+			"steps": [
+				{"needs": ["cc", "make", "pkg-config"]},
+				{"pkg": ["glib-2.0 >= 2.74", "gio-2.0"]},
+				{"each": {"from": "src/*.c src/build/*.c", "to": "build/obj/{id}.o", "run": "cc -std=${STD} $WARN -O2 -g -Isrc $(pkg-config --cflags $PKGS | sed \"s/-I/-isystem /g\") -c {from} -o {to}", "also": "src/build/*.h"}},
+				"cc -o build/${PROGRAM} build/obj/*.o $(pkg-config --libs $PKGS) -lm"
+			]
+		},
+		"install": {
+			"description": "Install the crimson-build command for the current user",
+			"depends": "build",
+			"steps": ["install -Dm755 build/${PROGRAM} ${PREFIX}/bin/${PROGRAM}"]
+		},
+		"uninstall": {
+			"description": "Remove the crimson-build command from the current user",
+			"steps": [{"remove": "${PREFIX}/bin/${PROGRAM}"}]
+		},
+		"archive": {
+			"description": "Pack the crimson-build command into a tar.gz archive in dist",
+			"depends": "build",
+			"steps": [
+				"name=${PROGRAM}-${VERSION}-linux-$(uname -m) && rm -rf dist/stage && mkdir -p dist/stage/$name && cp build/${PROGRAM} LICENSE README.md dist/stage/$name/ && tar -C dist/stage -czf dist/$name.tar.gz $name && rm -rf dist/stage && echo Wrote dist/$name.tar.gz"
+			]
+		},
+		"clean": {
+			"description": "Remove the build folder",
+			"steps": [{"remove": "build"}]
+		}
+	}
+}
