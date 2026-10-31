@@ -171,18 +171,15 @@ static const FileStep FILE_STEPS[] = {
 		"crimson_each() {\n"
 		"\tcrimson_rules=$(mktemp) || return 1\n"
 		"\tcrimson_make=$(mktemp) || return 1\n"
+		"\tcrimson_mine=$(mktemp) || return 1\n"
 		"\tcrimson_dir=$(dirname \"${2%%\\{id\\}*}x\")\n"
-		"\tcrimson_list=\"$crimson_dir/.crimson-each-$(printf '%s|%s' \"$1\" \"$2\" | cksum | cut -d' ' -f1)\"\n"
+		"\tcrimson_list=\"$crimson_dir/.crimson-each-$(printf '%s' \"$2\" | cksum | cut -d' ' -f1)\"\n"
+		"\tcrimson_stamp=\"$crimson_dir/.crimson-each-$(printf '%s|%s' \"$1\" \"$2\" | cksum | cut -d' ' -f1).run\"\n"
 		"\tcrimson_settings=$(printf '%s\\n' \"$3\"\n"
 		"\t\tfor crimson_name in $(printf '%s' \"$3\" | grep -o '\\${\\{0,1\\}[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u); do\n"
 		"\t\t\tcrimson_value=$(eval \"printf '%s' \\\"\\${$crimson_name}\\\"\")\n"
 		"\t\t\tprintf '%s=%s\\n' \"$crimson_name\" \"$crimson_value\"\n"
 		"\t\tdone)\n"
-		"\tmkdir -p \"$crimson_dir\"\n"
-		"\tif [ \"$(cat \"$crimson_list.run\" 2>/dev/null)\" != \"$crimson_settings\" ]; then\n"
-		"\t\t[ -f \"$crimson_list\" ] && while IFS= read -r crimson_old; do rm -f \"$crimson_old\"; done < \"$crimson_list\"\n"
-		"\t\tprintf '%s' \"$crimson_settings\" > \"$crimson_list.run\"\n"
-		"\tfi\n"
 		"\tcrimson_extra=\n"
 		"\tfor crimson_glob in $4; do\n"
 		"\t\tfor crimson_file in $crimson_glob; do\n"
@@ -191,6 +188,7 @@ static const FileStep FILE_STEPS[] = {
 		"\tdone\n"
 		"\tcrimson_all=\n"
 		"\tcrimson_sep=$(printf '\\037')\n"
+		"\tcrimson_tab=$(printf '\\t')\n"
 		"\tfor crimson_from in $1; do\n"
 		"\t\t[ -e \"$crimson_from\" ] || continue\n"
 		"\t\tcrimson_id=$(printf '%s' \"${crimson_from%.*}\" | tr '/.' '__')\n"
@@ -198,18 +196,32 @@ static const FileStep FILE_STEPS[] = {
 		"\t\tcrimson_to=$(printf '%s' \"$2\" | sed -e \"s${crimson_sep}{id}${crimson_sep}$crimson_id${crimson_sep}g\" -e \"s${crimson_sep}{name}${crimson_sep}$crimson_name${crimson_sep}g\")\n"
 		"\t\tcrimson_command=$(printf '%s' \"$3\" | sed -e 's/\\$/$$/g' -e \"s${crimson_sep}{from}${crimson_sep}$crimson_from${crimson_sep}g\" -e \"s${crimson_sep}{to}${crimson_sep}$crimson_to${crimson_sep}g\")\n"
 		"\t\tcrimson_all=\"$crimson_all $crimson_to\"\n"
+		"\t\tprintf '%s\\t%s\\n' \"$crimson_from\" \"$crimson_to\" >> \"$crimson_mine\"\n"
 		"\t\tprintf '%s: %s%s\\n\\t@mkdir -p \"$(dir $@)\"\\n\\t@echo \"==> %s\"\\n\\t%s\\n\\n' \"$crimson_to\" \"$crimson_from\" \"$crimson_extra\" \"$crimson_from\" \"$crimson_command\" >> \"$crimson_rules\"\n"
 		"\tdone\n"
+		"\tmkdir -p \"$crimson_dir\"\n"
+		"\t# A changed command or variable makes every result of this step stale\n"
+		"\tif [ \"$(cat \"$crimson_stamp\" 2>/dev/null)\" != \"$crimson_settings\" ]; then\n"
+		"\t\twhile IFS=\"$crimson_tab\" read -r crimson_from crimson_to; do\n"
+		"\t\t\trm -f \"$crimson_to\"\n"
+		"\t\tdone < \"$crimson_mine\"\n"
+		"\t\tprintf '%s' \"$crimson_settings\" > \"$crimson_stamp\"\n"
+		"\tfi\n"
+		"\t# Steps writing to the same place share one list, and the result of a source that is gone would still be picked up\n"
 		"\tif [ -f \"$crimson_list\" ]; then\n"
-		"\t\twhile IFS= read -r crimson_old; do\n"
-		"\t\t\tcase \" $crimson_all \" in *\" $crimson_old \"*) ;; *) rm -f \"$crimson_old\" ;; esac\n"
+		"\t\twhile IFS=\"$crimson_tab\" read -r crimson_from crimson_to; do\n"
+		"\t\t\tif [ ! -e \"$crimson_from\" ]; then\n"
+		"\t\t\t\trm -f \"$crimson_to\"\n"
+		"\t\t\telif ! cut -f1 \"$crimson_mine\" | grep -qxF \"$crimson_from\"; then\n"
+		"\t\t\t\tprintf '%s\\t%s\\n' \"$crimson_from\" \"$crimson_to\" >> \"$crimson_mine\"\n"
+		"\t\t\tfi\n"
 		"\t\tdone < \"$crimson_list\"\n"
 		"\tfi\n"
-		"\tprintf '%s\\n' $crimson_all > \"$crimson_list\"\n"
+		"\tsort \"$crimson_mine\" > \"$crimson_list\"\n"
 		"\t{ printf 'all:%s\\n\\n' \"$crimson_all\"; cat \"$crimson_rules\"; } > \"$crimson_make\"\n"
 		"\tcrimson_status=0\n"
 		"\tmake -s -f \"$crimson_make\" -j\"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)\" all || crimson_status=$?\n"
-		"\trm -f \"$crimson_make\" \"$crimson_rules\"\n"
+		"\trm -f \"$crimson_make\" \"$crimson_rules\" \"$crimson_mine\"\n"
 		"\treturn \"$crimson_status\"\n"
 		"}\n",
 		":crimson_each\n"
@@ -220,7 +232,7 @@ static const FileStep FILE_STEPS[] = {
 
 /* The Windows each step, which cmd cannot do by itself, so it runs in PowerShell from the end of the same script.
    cmd never reaches it, since every path through the script exits before. */
-static const char EACH_WINDOWS_RUNNER[] =
+static const char *const EACH_WINDOWS_RUNNER[] = {
 	EACH_WINDOWS_MARKER "\n"
 	"# Runs one each step for crimson_each above, which cmd cannot do by itself\n"
 	"$ErrorActionPreference = 'Stop'\n"
@@ -238,24 +250,18 @@ static const char EACH_WINDOWS_RUNNER[] =
 	"\treturn [IO.Path]::Combine($root, $path)\n"
 	"}\n"
 	"\n"
+	"function Get-Key([string] $text) {\n"
+	"\t$hash = [Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($text))\n"
+	"\treturn [BitConverter]::ToString($hash, 0, 4).Replace('-', '')\n"
+	"}\n"
+	"\n"
 	"$template = $env:CRIMSON_EACH_TO\n"
+	"$settings = $env:CRIMSON_EACH_RUN\n"
 	"$folder = Split-Path -Parent ($template.Substring(0, $template.IndexOf('{id}')) + 'x')\n"
 	"if (-not $folder) { $folder = '.' }\n"
-	"$md5 = [Security.Cryptography.MD5]::Create()\n"
-	"$hash = $md5.ComputeHash([Text.Encoding]::UTF8.GetBytes(\"$env:CRIMSON_EACH_FROM|$template\"))\n"
-	"$list = Get-FullPath \"$folder/.crimson-each-$([BitConverter]::ToString($hash, 0, 4).Replace('-', ''))\"\n"
+	"$list = Get-FullPath \"$folder/.crimson-each-$(Get-Key $template)\"\n"
+	"$stamp = Get-FullPath \"$folder/.crimson-each-$(Get-Key \"$env:CRIMSON_EACH_FROM|$template\").run\"\n"
 	"[void][IO.Directory]::CreateDirectory((Get-FullPath $folder))\n"
-	"$previous = @()\n"
-	"if (Test-Path -LiteralPath $list) { $previous = @([IO.File]::ReadAllLines($list)) }\n"
-	"\n"
-	"# A changed command or variable makes every earlier result stale\n"
-	"$settings = $env:CRIMSON_EACH_RUN\n"
-	"$oldSettings = $null\n"
-	"if (Test-Path -LiteralPath \"$list.run\") { $oldSettings = [IO.File]::ReadAllText(\"$list.run\") }\n"
-	"if ($oldSettings -ne $settings) {\n"
-	"\tforeach ($old in $previous) { Remove-Item -LiteralPath (Get-FullPath $old) -Force -ErrorAction SilentlyContinue }\n"
-	"\t[IO.File]::WriteAllText(\"$list.run\", $settings)\n"
-	"}\n"
 	"\n"
 	"$newestExtra = [DateTime]::MinValue\n"
 	"foreach ($extra in Get-Matches $env:CRIMSON_EACH_ALSO) {\n"
@@ -263,13 +269,39 @@ static const char EACH_WINDOWS_RUNNER[] =
 	"\tif ($time -gt $newestExtra) { $newestExtra = $time }\n"
 	"}\n"
 	"\n"
-	"$outputs = @()\n"
-	"$work = @()\n"
+	"$mine = [ordered]@{}\n"
 	"foreach ($source in @(Get-Matches $env:CRIMSON_EACH_FROM | Sort-Object -Unique)) {\n"
 	"\t$base = $source\n"
 	"\tif ($source.LastIndexOf('.') -ge 0) { $base = $source.Substring(0, $source.LastIndexOf('.')) }\n"
-	"\t$to = $template.Replace('{id}', $base.Replace('/', '_').Replace('.', '_')).Replace('{name}', (Split-Path -Leaf $base))\n"
-	"\t$outputs += $to\n"
+	"\t$mine[$source] = $template.Replace('{id}', $base.Replace('/', '_').Replace('.', '_')).Replace('{name}', (Split-Path -Leaf $base))\n"
+	"}\n"
+	"\n",
+	"# A changed command or variable makes every result of this step stale\n"
+	"$oldSettings = $null\n"
+	"if (Test-Path -LiteralPath $stamp) { $oldSettings = [IO.File]::ReadAllText($stamp) }\n"
+	"if ($oldSettings -ne $settings) {\n"
+	"\tforeach ($to in $mine.Values) { Remove-Item -LiteralPath (Get-FullPath $to) -Force -ErrorAction SilentlyContinue }\n"
+	"\t[IO.File]::WriteAllText($stamp, $settings)\n"
+	"}\n"
+	"\n"
+	"# Steps writing to the same place share one list, and the result of a source that is gone would still be picked up\n"
+	"$entries = @()\n"
+	"if (Test-Path -LiteralPath $list) {\n"
+	"\tforeach ($line in [IO.File]::ReadAllLines($list)) {\n"
+	"\t\t$source, $to = $line.Split(\"`t\")\n"
+	"\t\tif (-not (Test-Path -LiteralPath (Get-FullPath $source))) {\n"
+	"\t\t\tRemove-Item -LiteralPath (Get-FullPath $to) -Force -ErrorAction SilentlyContinue\n"
+	"\t\t} elseif (-not $mine.Contains($source)) {\n"
+	"\t\t\t$entries += $line\n"
+	"\t\t}\n"
+	"\t}\n"
+	"}\n"
+	"foreach ($source in $mine.Keys) { $entries += \"$source`t$($mine[$source])\" }\n"
+	"[IO.File]::WriteAllLines($list, [string[]]($entries | Sort-Object))\n"
+	"\n"
+	"$work = @()\n"
+	"foreach ($source in $mine.Keys) {\n"
+	"\t$to = $mine[$source]\n"
 	"\t$newest = [IO.File]::GetLastWriteTimeUtc((Get-FullPath $source))\n"
 	"\tif ($newestExtra -gt $newest) { $newest = $newestExtra }\n"
 	"\t$target = Get-FullPath $to\n"
@@ -277,12 +309,6 @@ static const char EACH_WINDOWS_RUNNER[] =
 	"\t$command = $settings.Replace('{from}', $source.Replace('/', '\\')).Replace('{to}', $to.Replace('/', '\\'))\n"
 	"\t$work += [pscustomobject]@{ From = $source; To = $to; Command = $command }\n"
 	"}\n"
-	"\n"
-	"# Results of files that are gone would still be picked up by the steps after this one\n"
-	"foreach ($old in $previous) {\n"
-	"\tif ($outputs -notcontains $old) { Remove-Item -LiteralPath (Get-FullPath $old) -Force -ErrorAction SilentlyContinue }\n"
-	"}\n"
-	"[IO.File]::WriteAllLines($list, [string[]]$outputs)\n"
 	"\n"
 	"# Runs as many commands at once as there are processors, and starts no new one after a failure\n"
 	"$running = New-Object 'Collections.Generic.List[Diagnostics.Process]'\n"
@@ -306,7 +332,8 @@ static const char EACH_WINDOWS_RUNNER[] =
 	"\tif ($process.ExitCode -ne 0) { $hasFailed = $true }\n"
 	"}\n"
 	"if ($hasFailed) { exit 1 }\n"
-	"exit 0\n";
+	"exit 0\n",
+};
 
 
 /* Files that tell which build command a new project most likely uses */
@@ -569,8 +596,9 @@ static gboolean write_file_step(Script *script, const FileStep *step, const Json
 
 
 /* Compiles or converts every file that matches a pattern, only those whose result is older than the file or its extras.
-   The step removes the results it made before for files that are gone, and all of them when its command or the
-   variables the command names changed, since make only compares file times */
+   Steps writing to the same place share a list of what they made, so a result whose file is gone, renamed or moved is
+   removed, and a step removes all its results when its command or the variables the command names change, since make
+   only compares file times */
 static gboolean write_each_step(Script *script, const JsonValue *argument, GError **error) {
 	const char *from = get_json_string(get_json_member(argument, "from"), NULL);
 	const char *to = get_json_string(get_json_member(argument, "to"), NULL);
@@ -742,8 +770,11 @@ static char *assemble_script(Script *script, const char *description) {
 		for (guint index = 0; index < G_N_ELEMENTS(FILE_STEPS); index++)
 			if (script->used_helpers & (1u << index))
 				g_string_append_printf(text, "\n%s", FILE_STEPS[index].windows_helper);
-		if (script->uses_each)
-			g_string_append_printf(text, "\n%s", EACH_WINDOWS_RUNNER);
+		if (script->uses_each) {
+			g_string_append_c(text, '\n');
+			for (guint index = 0; index < G_N_ELEMENTS(EACH_WINDOWS_RUNNER); index++)
+				g_string_append(text, EACH_WINDOWS_RUNNER[index]);
+		}
 	}
 	if (script->kind == SCRIPT_SHELL)
 		return g_string_free(text, FALSE);
