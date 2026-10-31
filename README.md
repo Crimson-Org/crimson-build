@@ -1,5 +1,5 @@
 <h1 align="center">Crimson Build</h1>
-<p align="center">A command and a library that turn the Crimson <code>tasks.json</code> format into shell and Windows scripts that run anywhere.</p>
+<p align="center">A command line tool and C library that turns Crimson <code>tasks.json</code> files into shell and Windows scripts that run anywhere.</p>
 
 <p align="center">
   <a href="https://github.com/Crimson-Org/crimson-build/releases/latest"><b>Download Here!</b></a>
@@ -7,30 +7,29 @@
 
 ## Why
 
-Building most projects means installing the tool that builds them first.\
-Crimson Build writes the build as plain scripts instead, so a shell, a compiler and the project's libraries are all anyone needs.
+Most projects need their build tool installed first.\
+Crimson Build writes plain scripts instead, so you only need a shell, a compiler and the project's libraries.
 
 ## About
 
 ### A command
 
-`crimson-build` reads the `tasks.json` in a project and writes a `.sh` script for Linux and macOS and a `.cmd` script for Windows for each task into `.crimson-build/`.\
-`crimson-build FOLDER` does it for another project, and the current folder is the default.
+`crimson-build` reads a project's `tasks.json` and writes a `.sh` script for Linux and macOS and a `.cmd` script for Windows into `.crimson-build/`.\
+`crimson-build FOLDER` does the same for another folder.
 
 ### A library
 
-Any program can import the same code from `src/build` to read tasks, list them and write the scripts itself, which is how Crimson Code builds its task menu.\
+Programs can use the same code to read tasks, list them and write the scripts.\
 Add the repository as a submodule in `subprojects/crimson-build` and compile `src/build/*.c` with `-Isubprojects/crimson-build/src`.
 
-### Its own format
+### The format
 
-`tasks.json` is Crimson's own format and not a general one.\
-A task is a list of steps and `${NAME}` reads a variable.\
-Steps run shell commands, copy, move, remove, archive, extract, download or upload files, call another task, check that tools and libraries are installed, and build only the files that changed.
+A task is a list of steps, and `${NAME}` reads a variable.\
+Steps run shell commands, copy, move, remove, archive, extract, download or upload files, call other tasks, check that tools and libraries are installed, and build only the files that changed.
 
 ### Scripts that stand alone
 
-Nobody needs Crimson Build to run the scripts, only a shell.
+The scripts work without Crimson Build.
 
 ## Example
 
