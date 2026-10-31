@@ -166,6 +166,18 @@ static const FileStep FILE_STEPS[] = {
 		"crimson_each() {\n"
 		"\tcrimson_rules=$(mktemp) || return 1\n"
 		"\tcrimson_make=$(mktemp) || return 1\n"
+		"\tcrimson_dir=$(dirname \"${2%%\\{id\\}*}x\")\n"
+		"\tcrimson_list=\"$crimson_dir/.crimson-each-$(printf '%s|%s' \"$1\" \"$2\" | cksum | cut -d' ' -f1)\"\n"
+		"\tcrimson_settings=$(printf '%s\\n' \"$3\"\n"
+		"\t\tfor crimson_name in $(printf '%s' \"$3\" | grep -o '\\${\\{0,1\\}[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u); do\n"
+		"\t\t\tcrimson_value=$(eval \"printf '%s' \\\"\\${$crimson_name}\\\"\")\n"
+		"\t\t\tprintf '%s=%s\\n' \"$crimson_name\" \"$crimson_value\"\n"
+		"\t\tdone)\n"
+		"\tmkdir -p \"$crimson_dir\"\n"
+		"\tif [ \"$(cat \"$crimson_list.run\" 2>/dev/null)\" != \"$crimson_settings\" ]; then\n"
+		"\t\t[ -f \"$crimson_list\" ] && while IFS= read -r crimson_old; do rm -f \"$crimson_old\"; done < \"$crimson_list\"\n"
+		"\t\tprintf '%s' \"$crimson_settings\" > \"$crimson_list.run\"\n"
+		"\tfi\n"
 		"\tcrimson_extra=\n"
 		"\tfor crimson_glob in $4; do\n"
 		"\t\tfor crimson_file in $crimson_glob; do\n"
@@ -183,14 +195,11 @@ static const FileStep FILE_STEPS[] = {
 		"\t\tcrimson_all=\"$crimson_all $crimson_to\"\n"
 		"\t\tprintf '%s: %s%s\\n\\t@mkdir -p \"$(dir $@)\"\\n\\t@echo \"==> %s\"\\n\\t%s\\n\\n' \"$crimson_to\" \"$crimson_from\" \"$crimson_extra\" \"$crimson_from\" \"$crimson_command\" >> \"$crimson_rules\"\n"
 		"\tdone\n"
-		"\tcrimson_dir=$(dirname \"${2%%\\{id\\}*}x\")\n"
-		"\tcrimson_list=\"$crimson_dir/.crimson-each-$(printf '%s|%s' \"$1\" \"$2\" | cksum | cut -d' ' -f1)\"\n"
 		"\tif [ -f \"$crimson_list\" ]; then\n"
 		"\t\twhile IFS= read -r crimson_old; do\n"
 		"\t\t\tcase \" $crimson_all \" in *\" $crimson_old \"*) ;; *) rm -f \"$crimson_old\" ;; esac\n"
 		"\t\tdone < \"$crimson_list\"\n"
 		"\tfi\n"
-		"\tmkdir -p \"$crimson_dir\"\n"
 		"\tprintf '%s\\n' $crimson_all > \"$crimson_list\"\n"
 		"\t{ printf 'all:%s\\n\\n' \"$crimson_all\"; cat \"$crimson_rules\"; } > \"$crimson_make\"\n"
 		"\tcrimson_status=0\n"
@@ -462,8 +471,9 @@ static gboolean write_file_step(Script *script, const FileStep *step, const Json
 }
 
 
-/* Compiles or converts every file that matches a pattern, only those whose result is older than the file or its extras,
-   and removes the results it made before for files that are gone */
+/* Compiles or converts every file that matches a pattern, only those whose result is older than the file or its extras.
+   The step removes the results it made before for files that are gone, and all of them when its command or the
+   variables the command names changed, since make only compares file times */
 static gboolean write_each_step(Script *script, const JsonValue *argument, GError **error) {
 	const char *from = get_json_string(get_json_member(argument, "from"), NULL);
 	const char *to = get_json_string(get_json_member(argument, "to"), NULL);
@@ -860,7 +870,8 @@ gboolean create_task_file(const char *project_directory, GError **error) {
 		"//   {\"needs\": [\"cc\", \"make\"]}   {\"pkg\": [\"gtk4 >= 4.14\"]}   stop with a clear message when a tool or library is missing\n"
 		"//   {\"each\": {\"from\": \"src/*.c\", \"to\": \"build/{id}.o\", \"run\": \"cc -c {from} -o {to}\", \"also\": \"src/*.h\"}}\n"
 		"//   runs for each file that matches, in parallel, and only when the result is older than the file or the extras,\n"
-		"//   and removes the results of files that are gone\n"
+		"//   removes the results of files that are gone, and builds everything again when the command or the\n"
+		"//   variables it names change\n"
 		"// A task may also have \"description\", \"depends\", \"directory\" and \"env\", and ${NAME} reads a\n"
 		"// variable. Paths use / on all systems.\n"
 		"{\n"
