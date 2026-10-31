@@ -14,11 +14,13 @@ Crimson Build writes the build as plain scripts instead, so a shell, a compiler 
 
 ### A command
 
-`crimson-build` reads the `tasks.json` in a project and writes a `.sh` script for Linux and macOS and a `.cmd` script for Windows for each task into `.crimson-build/`.
+`crimson-build` reads the `tasks.json` in a project and writes a `.sh` script for Linux and macOS and a `.cmd` script for Windows for each task into `.crimson-build/`.\
+`crimson-build FOLDER` does it for another project, and the current folder is the default.
 
 ### A library
 
-Any program can import the same code from `src/build` to read tasks, list them and write the scripts itself, which is how Crimson Code builds its task menu.
+Any program can import the same code from `src/build` to read tasks, list them and write the scripts itself, which is how Crimson Code builds its task menu.\
+Add the repository as a submodule in `subprojects/crimson-build` and compile `src/build/*.c` with `-Isubprojects/crimson-build/src`.
 
 ### Its own format
 
@@ -60,8 +62,10 @@ This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs 
 
 ## Building
 
-You need a C compiler, make, pkg-config and the GLib development files.\
-`sh .crimson-build/build.sh` builds `build/crimson-build`, `sh .crimson-build/install.sh` installs it for your user and `sh .crimson-build/uninstall.sh` removes it.\
-`crimson-build FOLDER` writes the scripts of a project folder, its `.crimson-build` folder or its `tasks.json`, and the current folder is the default.
+You need a C compiler, make, pkg-config and the GLib development files.
 
-A program that uses the library adds the repository as a submodule in `subprojects/crimson-build` and compiles `src/build/*.c` with `-Isubprojects/crimson-build/src`.
+Steps:
+ 1. Clone using `git clone https://github.com/Crimson-Org/crimson-build`
+ 2. Run `sh .crimson-build/install.sh`
+
+`sh .crimson-build/uninstall.sh` removes it again.
