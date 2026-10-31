@@ -33,7 +33,7 @@ The scripts work without Crimson Build.
 
 ## Example
 
-This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs it.
+This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs the program.
 
 ```json
 {
@@ -56,7 +56,7 @@ This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs 
 }
 ```
 
-`crimson-build` writes `build.sh`, `build.cmd`, `run.sh` and `run.cmd` next to it.\
+`crimson-build` writes `build.sh`, `build.cmd`, `run.sh` and `run.cmd` next to `tasks.json`.\
 `sh .crimson-build/run.sh` builds only the files that changed and starts the program.
 
 ## Building
@@ -67,4 +67,4 @@ Steps:
  1. Clone using `git clone https://github.com/Crimson-Org/crimson-build`
  2. Run `sh .crimson-build/install.sh`
 
-`sh .crimson-build/uninstall.sh` removes it again.
+`sh .crimson-build/uninstall.sh` uninstalls Crimson Build.
