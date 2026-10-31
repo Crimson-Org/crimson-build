@@ -10,7 +10,7 @@
 Building most projects means installing the tool that builds them first.\
 Crimson Build writes the build as plain scripts instead, so a shell, a compiler and the project's libraries are all anyone needs.
 
-## Features
+## About
 
 ### A command
 
