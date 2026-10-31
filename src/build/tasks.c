@@ -10,6 +10,10 @@
 #define SHELL_EXTENSION ".sh"
 #define WINDOWS_EXTENSION ".cmd"
 #define EXECUTABLE_MODE 0755
+#define EACH_WINDOWS_MARKER "<# crimson_each #>"
+
+/* The each step's from, to, run and also, handed to its Windows runner */
+static const char *const EACH_WINDOWS_VARIABLES[] = {"CRIMSON_EACH_FROM", "CRIMSON_EACH_TO", "CRIMSON_EACH_RUN", "CRIMSON_EACH_ALSO"};
 #define ERROR_DOMAIN g_quark_from_static_string("crimson-code-tasks")
 
 /* The two kinds of script made for each task */
@@ -23,6 +27,7 @@ typedef struct {
 	ScriptKind kind;
 	GString *steps;
 	guint used_helpers;
+	gboolean uses_each;
 	/* Each task name, so calls to other tasks can be checked */
 	const JsonValue *tasks;
 } Script;
@@ -208,9 +213,101 @@ static const FileStep FILE_STEPS[] = {
 		"\treturn \"$crimson_status\"\n"
 		"}\n",
 		":crimson_each\n"
-		"echo Building each file needs a Unix shell with make\n"
-		"exit /b 1\n"},
+		"powershell -NoProfile -ExecutionPolicy Bypass -Command \"$text = [IO.File]::ReadAllText('%~f0'); "
+		"Invoke-Expression $text.Substring($text.LastIndexOf('" EACH_WINDOWS_MARKER "'))\"\n"
+		"exit /b\n"},
 };
+
+/* The Windows each step, which cmd cannot do by itself, so it runs in PowerShell from the end of the same script.
+   cmd never reaches it, since every path through the script exits before. */
+static const char EACH_WINDOWS_RUNNER[] =
+	EACH_WINDOWS_MARKER "\n"
+	"# Runs one each step for crimson_each above, which cmd cannot do by itself\n"
+	"$ErrorActionPreference = 'Stop'\n"
+	"$root = (Get-Location).Path\n"
+	"\n"
+	"function Get-Matches([string] $patterns) {\n"
+	"\tforeach ($pattern in $patterns.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)) {\n"
+	"\t\tforeach ($file in Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue) {\n"
+	"\t\t\t(Resolve-Path -LiteralPath $file.FullName -Relative) -replace '^\\.[\\\\/]', '' -replace '\\\\', '/'\n"
+	"\t\t}\n"
+	"\t}\n"
+	"}\n"
+	"\n"
+	"function Get-FullPath([string] $path) {\n"
+	"\treturn [IO.Path]::Combine($root, $path)\n"
+	"}\n"
+	"\n"
+	"$template = $env:CRIMSON_EACH_TO\n"
+	"$folder = Split-Path -Parent ($template.Substring(0, $template.IndexOf('{id}')) + 'x')\n"
+	"if (-not $folder) { $folder = '.' }\n"
+	"$md5 = [Security.Cryptography.MD5]::Create()\n"
+	"$hash = $md5.ComputeHash([Text.Encoding]::UTF8.GetBytes(\"$env:CRIMSON_EACH_FROM|$template\"))\n"
+	"$list = Get-FullPath \"$folder/.crimson-each-$([BitConverter]::ToString($hash, 0, 4).Replace('-', ''))\"\n"
+	"[void][IO.Directory]::CreateDirectory((Get-FullPath $folder))\n"
+	"$previous = @()\n"
+	"if (Test-Path -LiteralPath $list) { $previous = @([IO.File]::ReadAllLines($list)) }\n"
+	"\n"
+	"# A changed command or variable makes every earlier result stale\n"
+	"$settings = $env:CRIMSON_EACH_RUN\n"
+	"$oldSettings = $null\n"
+	"if (Test-Path -LiteralPath \"$list.run\") { $oldSettings = [IO.File]::ReadAllText(\"$list.run\") }\n"
+	"if ($oldSettings -ne $settings) {\n"
+	"\tforeach ($old in $previous) { Remove-Item -LiteralPath (Get-FullPath $old) -Force -ErrorAction SilentlyContinue }\n"
+	"\t[IO.File]::WriteAllText(\"$list.run\", $settings)\n"
+	"}\n"
+	"\n"
+	"$newestExtra = [DateTime]::MinValue\n"
+	"foreach ($extra in Get-Matches $env:CRIMSON_EACH_ALSO) {\n"
+	"\t$time = [IO.File]::GetLastWriteTimeUtc((Get-FullPath $extra))\n"
+	"\tif ($time -gt $newestExtra) { $newestExtra = $time }\n"
+	"}\n"
+	"\n"
+	"$outputs = @()\n"
+	"$work = @()\n"
+	"foreach ($source in @(Get-Matches $env:CRIMSON_EACH_FROM | Sort-Object -Unique)) {\n"
+	"\t$base = $source\n"
+	"\tif ($source.LastIndexOf('.') -ge 0) { $base = $source.Substring(0, $source.LastIndexOf('.')) }\n"
+	"\t$to = $template.Replace('{id}', $base.Replace('/', '_').Replace('.', '_')).Replace('{name}', (Split-Path -Leaf $base))\n"
+	"\t$outputs += $to\n"
+	"\t$newest = [IO.File]::GetLastWriteTimeUtc((Get-FullPath $source))\n"
+	"\tif ($newestExtra -gt $newest) { $newest = $newestExtra }\n"
+	"\t$target = Get-FullPath $to\n"
+	"\tif ((Test-Path -LiteralPath $target) -and [IO.File]::GetLastWriteTimeUtc($target) -ge $newest) { continue }\n"
+	"\t$command = $settings.Replace('{from}', $source.Replace('/', '\\')).Replace('{to}', $to.Replace('/', '\\'))\n"
+	"\t$work += [pscustomobject]@{ From = $source; To = $to; Command = $command }\n"
+	"}\n"
+	"\n"
+	"# Results of files that are gone would still be picked up by the steps after this one\n"
+	"foreach ($old in $previous) {\n"
+	"\tif ($outputs -notcontains $old) { Remove-Item -LiteralPath (Get-FullPath $old) -Force -ErrorAction SilentlyContinue }\n"
+	"}\n"
+	"[IO.File]::WriteAllLines($list, [string[]]$outputs)\n"
+	"\n"
+	"# Runs as many commands at once as there are processors, and starts no new one after a failure\n"
+	"$running = New-Object 'Collections.Generic.List[Diagnostics.Process]'\n"
+	"$hasFailed = $false\n"
+	"foreach ($item in $work) {\n"
+	"\twhile ($running.Count -ge [Environment]::ProcessorCount) {\n"
+	"\t\t$running[0].WaitForExit()\n"
+	"\t\tif ($running[0].ExitCode -ne 0) { $hasFailed = $true }\n"
+	"\t\t$running.RemoveAt(0)\n"
+	"\t}\n"
+	"\tif ($hasFailed) { break }\n"
+	"\t[void][IO.Directory]::CreateDirectory((Split-Path -Parent (Get-FullPath $item.To)))\n"
+	"\tWrite-Host \"==> $($item.From)\"\n"
+	"\t$start = New-Object Diagnostics.ProcessStartInfo $env:ComSpec, \"/d /s /c `\"$($item.Command)`\"\"\n"
+	"\t$start.UseShellExecute = $false\n"
+	"\t$start.WorkingDirectory = $root\n"
+	"\t$running.Add([Diagnostics.Process]::Start($start))\n"
+	"}\n"
+	"foreach ($process in $running) {\n"
+	"\t$process.WaitForExit()\n"
+	"\tif ($process.ExitCode -ne 0) { $hasFailed = $true }\n"
+	"}\n"
+	"if ($hasFailed) { exit 1 }\n"
+	"exit 0\n";
+
 
 /* Files that tell which build command a new project most likely uses */
 static const struct {
@@ -496,15 +593,21 @@ static gboolean write_each_step(Script *script, const JsonValue *argument, GErro
 	for (guint index = 0; index < G_N_ELEMENTS(FILE_STEPS); index++)
 		if (strcmp(FILE_STEPS[index].name, "each") == 0)
 			script->used_helpers |= 1u << index;
+	script->uses_each = TRUE;
 	g_autofree char *label = g_strdup_printf("each %s", from);
 	append_label(script, label);
+	const char *values[4] = {from, to, run, extras->str};
 	if (script->kind == SCRIPT_WINDOWS) {
+		for (int index = 0; index < 4; index++) {
+			g_string_append_printf(script->steps, "set \"%s=", EACH_WINDOWS_VARIABLES[index]);
+			append_windows_text(script->steps, values[index], FALSE, TRUE);
+			g_string_append(script->steps, "\"\n");
+		}
 		g_string_append(script->steps, "call :crimson_each\n");
 		append_failure_check(script);
 		return TRUE;
 	}
 	g_string_append(script->steps, "crimson_each ");
-	const char *values[4] = {from, to, run, extras->str};
 	for (int index = 0; index < 4; index++) {
 		append_shell_quoted(script->steps, values[index]);
 		g_string_append_c(script->steps, index < 3 ? ' ' : '\n');
@@ -639,6 +742,8 @@ static char *assemble_script(Script *script, const char *description) {
 		for (guint index = 0; index < G_N_ELEMENTS(FILE_STEPS); index++)
 			if (script->used_helpers & (1u << index))
 				g_string_append_printf(text, "\n%s", FILE_STEPS[index].windows_helper);
+		if (script->uses_each)
+			g_string_append_printf(text, "\n%s", EACH_WINDOWS_RUNNER);
 	}
 	if (script->kind == SCRIPT_SHELL)
 		return g_string_free(text, FALSE);
@@ -652,7 +757,7 @@ static char *assemble_script(Script *script, const char *description) {
 static char *make_script(ScriptKind kind, const JsonValue *root, const char *name, GError **error) {
 	const JsonValue *tasks = get_json_member(root, "tasks");
 	const JsonValue *task = get_json_member(tasks, name);
-	Script script = {kind, g_string_new(NULL), 0, tasks};
+	Script script = {.kind = kind, .steps = g_string_new(NULL), .tasks = tasks};
 	gboolean is_written = write_task_body(&script, root, task, error);
 	char *text = is_written ? assemble_script(&script, get_json_string(get_json_member(task, "description"), NULL))
 		: NULL;
