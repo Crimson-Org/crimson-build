@@ -183,6 +183,15 @@ static const FileStep FILE_STEPS[] = {
 		"\t\tcrimson_all=\"$crimson_all $crimson_to\"\n"
 		"\t\tprintf '%s: %s%s\\n\\t@mkdir -p \"$(dir $@)\"\\n\\t@echo \"==> %s\"\\n\\t%s\\n\\n' \"$crimson_to\" \"$crimson_from\" \"$crimson_extra\" \"$crimson_from\" \"$crimson_command\" >> \"$crimson_rules\"\n"
 		"\tdone\n"
+		"\tcrimson_dir=$(dirname \"${2%%\\{id\\}*}x\")\n"
+		"\tcrimson_list=\"$crimson_dir/.crimson-each-$(printf '%s|%s' \"$1\" \"$2\" | cksum | cut -d' ' -f1)\"\n"
+		"\tif [ -f \"$crimson_list\" ]; then\n"
+		"\t\twhile IFS= read -r crimson_old; do\n"
+		"\t\t\tcase \" $crimson_all \" in *\" $crimson_old \"*) ;; *) rm -f \"$crimson_old\" ;; esac\n"
+		"\t\tdone < \"$crimson_list\"\n"
+		"\tfi\n"
+		"\tmkdir -p \"$crimson_dir\"\n"
+		"\tprintf '%s\\n' $crimson_all > \"$crimson_list\"\n"
 		"\t{ printf 'all:%s\\n\\n' \"$crimson_all\"; cat \"$crimson_rules\"; } > \"$crimson_make\"\n"
 		"\tcrimson_status=0\n"
 		"\tmake -s -f \"$crimson_make\" -j\"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)\" all || crimson_status=$?\n"
@@ -453,7 +462,8 @@ static gboolean write_file_step(Script *script, const FileStep *step, const Json
 }
 
 
-/* Compiles or converts every file that matches a pattern, only those whose result is older than the file or its extras */
+/* Compiles or converts every file that matches a pattern, only those whose result is older than the file or its extras,
+   and removes the results it made before for files that are gone */
 static gboolean write_each_step(Script *script, const JsonValue *argument, GError **error) {
 	const char *from = get_json_string(get_json_member(argument, "from"), NULL);
 	const char *to = get_json_string(get_json_member(argument, "to"), NULL);
@@ -849,7 +859,8 @@ gboolean create_task_file(const char *project_directory, GError **error) {
 		"//   {\"task\": \"other-task\"}   {\"echo\": \"Done\"}\n"
 		"//   {\"needs\": [\"cc\", \"make\"]}   {\"pkg\": [\"gtk4 >= 4.14\"]}   stop with a clear message when a tool or library is missing\n"
 		"//   {\"each\": {\"from\": \"src/*.c\", \"to\": \"build/{id}.o\", \"run\": \"cc -c {from} -o {to}\", \"also\": \"src/*.h\"}}\n"
-		"//   runs for each file that matches, in parallel, and only when the result is older than the file or the extras\n"
+		"//   runs for each file that matches, in parallel, and only when the result is older than the file or the extras,\n"
+		"//   and removes the results of files that are gone\n"
 		"// A task may also have \"description\", \"depends\", \"directory\" and \"env\", and ${NAME} reads a\n"
 		"// variable. Paths use / on all systems.\n"
 		"{\n"
