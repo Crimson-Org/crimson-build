@@ -10,6 +10,14 @@
 #define SHELL_EXTENSION ".sh"
 #define WINDOWS_EXTENSION ".cmd"
 #define EXECUTABLE_MODE 0755
+#define FOLDER_MODE 0755
+/* A step such as copy takes up to two arguments, such as from and to */
+#define STEP_ARGUMENTS 2
+/* Each task becomes a shell script and a Windows script, in that order */
+#define SCRIPTS_PER_TASK 2
+/* Variables are written ${NAME} */
+#define VARIABLE_OPEN "${"
+#define VARIABLE_OPEN_LENGTH (sizeof VARIABLE_OPEN - 1)
 #define EACH_WINDOWS_MARKER "<# crimson_each #>"
 
 /* The each step's from, to, run and also, handed to its Windows runner */
@@ -36,8 +44,8 @@ typedef struct {
 typedef struct {
 	const char *name;
 	/* Member names of the two arguments, or NULL for a step taking one path or a list of paths */
-	const char *fields[2];
-	gboolean are_paths[2];
+	const char *fields[STEP_ARGUMENTS];
+	gboolean are_paths[STEP_ARGUMENTS];
 	const char *shell_helper, *windows_helper;
 } FileStep;
 
@@ -230,8 +238,8 @@ static const FileStep FILE_STEPS[] = {
 		"exit /b\n"},
 };
 
-/* The Windows each step, which cmd cannot do by itself, so it runs in PowerShell from the end of the same script.
-   cmd never reaches it, since every path through the script exits before. */
+/* The Windows each step, which cmd cannot do by itself, so the step runs in PowerShell from the end of the same
+ * script, which cmd never reaches, since every path through the script exits before */
 static const char *const EACH_WINDOWS_RUNNER[] = {
 	EACH_WINDOWS_MARKER "\n"
 	"# Runs one each step for crimson_each above, which cmd cannot do by itself\n"
@@ -350,7 +358,7 @@ static const struct {
 
 
 static gboolean is_variable_start(const char *text) {
-	return text[0] == '$' && text[1] == '{';
+	return strncmp(text, VARIABLE_OPEN, VARIABLE_OPEN_LENGTH) == 0;
 }
 
 
@@ -384,7 +392,7 @@ static void append_windows_text(GString *output, const char *text, gboolean is_p
 		const char *close = is_variable_start(character) ? strchr(character, '}') : NULL;
 		if (close) {
 			g_string_append_c(output, '%');
-			g_string_append_len(output, character + 2, close - character - 2);
+			g_string_append_len(output, character + VARIABLE_OPEN_LENGTH, close - character - VARIABLE_OPEN_LENGTH);
 			g_string_append_c(output, '%');
 			character = close;
 		} else if (*character == '/' && is_path) {
@@ -411,7 +419,7 @@ static void append_windows_echo(GString *output, const char *text) {
 	for (const char *character = text; *character; character++) {
 		const char *close = is_variable_start(character) ? strchr(character, '}') : NULL;
 		if (close) {
-			g_string_append_printf(output, "%%%.*s%%", (int)(close - character - 2), character + 2);
+			g_string_append_printf(output, "%%%.*s%%", (int)(close - character - VARIABLE_OPEN_LENGTH), character + VARIABLE_OPEN_LENGTH);
 			character = close;
 			continue;
 		}
@@ -554,7 +562,7 @@ static void append_helper_call(Script *script, const FileStep *step, const char 
 		: g_strdup_printf("%s %s", step->name, values[0]);
 	append_label(script, label);
 	g_string_append_printf(script->steps, script->kind == SCRIPT_SHELL ? "crimson_%s" : "call :crimson_%s", step->name);
-	for (int index = 0; index < 2 && values[index]; index++) {
+	for (int index = 0; index < STEP_ARGUMENTS && values[index]; index++) {
 		g_string_append_c(script->steps, ' ');
 		if (script->kind == SCRIPT_SHELL)
 			append_shell_quoted(script->steps, values[index]);
@@ -572,7 +580,7 @@ static gboolean write_file_step(Script *script, const FileStep *step, const Json
 		gboolean is_list = argument->kind == JSON_ARRAY;
 		guint count = is_list ? get_json_length(argument) : 1;
 		for (guint index = 0; index < count; index++) {
-			const char *values[2] = {get_json_string(is_list ? get_json_item(argument, index) : argument, NULL)};
+			const char *values[STEP_ARGUMENTS] = {get_json_string(is_list ? get_json_item(argument, index) : argument, NULL)};
 			if (!values[0]) {
 				g_set_error(error, ERROR_DOMAIN, 0, "A %s step takes a path or a list of paths", step->name);
 				return FALSE;
@@ -581,7 +589,7 @@ static gboolean write_file_step(Script *script, const FileStep *step, const Json
 		}
 		return TRUE;
 	}
-	const char *values[2] = {
+	const char *values[STEP_ARGUMENTS] = {
 		get_json_string(get_json_member(argument, step->fields[0]), NULL),
 		get_json_string(get_json_member(argument, step->fields[1]), NULL),
 	};
@@ -595,10 +603,10 @@ static gboolean write_file_step(Script *script, const FileStep *step, const Json
 }
 
 
-/* Compiles or converts every file that matches a pattern, only those whose result is older than the file or its extras.
-   Steps writing to the same place share a list of what they made, so a result whose file is gone, renamed or moved is
-   removed, and a step removes all its results when its command or the variables the command names change, since make
-   only compares file times */
+/* Compiles or converts every file that matches a pattern, only those whose result is older than the file or the extras.
+ * Steps writing to the same place share a list of what they made, so a result whose file is gone, renamed or moved is
+ * removed, and a step removes all of its results when the command or the variables the command names change, since
+ * make only compares file times */
 static gboolean write_each_step(Script *script, const JsonValue *argument, GError **error) {
 	const char *from = get_json_string(get_json_member(argument, "from"), NULL);
 	const char *to = get_json_string(get_json_member(argument, "to"), NULL);
@@ -624,9 +632,9 @@ static gboolean write_each_step(Script *script, const JsonValue *argument, GErro
 	script->uses_each = TRUE;
 	g_autofree char *label = g_strdup_printf("each %s", from);
 	append_label(script, label);
-	const char *values[4] = {from, to, run, extras->str};
+	const char *values[] = {from, to, run, extras->str};
 	if (script->kind == SCRIPT_WINDOWS) {
-		for (int index = 0; index < 4; index++) {
+		for (guint index = 0; index < G_N_ELEMENTS(values); index++) {
 			g_string_append_printf(script->steps, "set \"%s=", EACH_WINDOWS_VARIABLES[index]);
 			append_windows_text(script->steps, values[index], FALSE, TRUE);
 			g_string_append(script->steps, "\"\n");
@@ -636,9 +644,9 @@ static gboolean write_each_step(Script *script, const JsonValue *argument, GErro
 		return TRUE;
 	}
 	g_string_append(script->steps, "crimson_each ");
-	for (int index = 0; index < 4; index++) {
+	for (guint index = 0; index < G_N_ELEMENTS(values); index++) {
 		append_shell_quoted(script->steps, values[index]);
-		g_string_append_c(script->steps, index < 3 ? ' ' : '\n');
+		g_string_append_c(script->steps, index + 1 < G_N_ELEMENTS(values) ? ' ' : '\n');
 	}
 	return TRUE;
 }
@@ -962,8 +970,8 @@ gboolean write_task_scripts(const char *project_directory, GError **error) {
 		}
 	}
 	for (guint index = 0; index < texts->len; index++) {
-		const char *name = g_ptr_array_index(tasks->names, index / 2);
-		gboolean is_shell = index % 2 == 0;
+		const char *name = g_ptr_array_index(tasks->names, index / SCRIPTS_PER_TASK);
+		gboolean is_shell = index % SCRIPTS_PER_TASK == 0;
 		g_autofree char *file_name = g_strconcat(name, is_shell ? SHELL_EXTENSION : WINDOWS_EXTENSION, NULL);
 		g_autofree char *path = g_build_filename(directory, file_name, NULL);
 		if (!g_file_set_contents(path, g_ptr_array_index(texts, index), -1, error))
@@ -1020,7 +1028,7 @@ gboolean create_task_file(const char *project_directory, GError **error) {
 		"\t}\n"
 		"}\n", command_json);
 	g_autofree char *directory = g_path_get_dirname(path);
-	if (g_mkdir_with_parents(directory, 0755) != 0) {
+	if (g_mkdir_with_parents(directory, FOLDER_MODE) != 0) {
 		g_set_error(error, ERROR_DOMAIN, 0, "Could not create %s", directory);
 		return FALSE;
 	}

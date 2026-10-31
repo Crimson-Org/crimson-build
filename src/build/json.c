@@ -4,6 +4,21 @@
 #include "build/json.h"
 
 #define MAXIMUM_DEPTH 512
+#define BLOCK_COMMENT_OPEN "/*"
+#define BLOCK_COMMENT_CLOSE "*/"
+/* A \u escape holds four hex digits, and characters past the first 65536 take a high and a low surrogate */
+#define ESCAPE_DIGITS 4
+#define HEX_BASE 16
+#define FIRST_HIGH_SURROGATE 0xD800
+#define LAST_HIGH_SURROGATE 0xDBFF
+#define FIRST_LOW_SURROGATE 0xDC00
+#define LAST_LOW_SURROGATE 0xDFFF
+#define FIRST_PAIRED_CHARACTER 0x10000
+#define SURROGATE_BITS 10
+/* Characters below a space must be escaped in JSON text */
+#define FIRST_PLAIN_CHARACTER 0x20
+/* Whole numbers below this are written exactly, while a double still holds every digit */
+#define LARGEST_PLAIN_WHOLE_NUMBER 1e15
 
 /* Reading position within the text being parsed */
 typedef struct {
@@ -169,8 +184,9 @@ static void skip_space(Parser *parser) {
 			while (parser->position < parser->end && *parser->position != '\n')
 				parser->position++;
 		} else if (character == '/' && parser->position + 1 < parser->end && parser->position[1] == '*') {
-			const char *close = g_strstr_len(parser->position + 2, parser->end - parser->position - 2, "*/");
-			parser->position = close ? close + 2 : parser->end;
+			const char *inside = parser->position + strlen(BLOCK_COMMENT_OPEN);
+			const char *close = g_strstr_len(inside, parser->end - inside, BLOCK_COMMENT_CLOSE);
+			parser->position = close ? close + strlen(BLOCK_COMMENT_CLOSE) : parser->end;
 		} else {
 			return;
 		}
@@ -188,16 +204,16 @@ static gboolean read_word(Parser *parser, const char *word) {
 
 
 static int read_hex_digits(Parser *parser) {
-	if (parser->end - parser->position < 4)
+	if (parser->end - parser->position < ESCAPE_DIGITS)
 		return -1;
 	int code = 0;
-	for (int index = 0; index < 4; index++) {
+	for (int index = 0; index < ESCAPE_DIGITS; index++) {
 		int digit = g_ascii_xdigit_value(parser->position[index]);
 		if (digit < 0)
 			return -1;
-		code = code * 16 + digit;
+		code = code * HEX_BASE + digit;
 	}
-	parser->position += 4;
+	parser->position += ESCAPE_DIGITS;
 	return code;
 }
 
@@ -207,11 +223,11 @@ static gboolean read_unicode_escape(Parser *parser, GString *text) {
 	int code = read_hex_digits(parser);
 	if (code < 0)
 		return FALSE;
-	if (code >= 0xD800 && code <= 0xDBFF && read_word(parser, "\\u")) {
+	if (code >= FIRST_HIGH_SURROGATE && code <= LAST_HIGH_SURROGATE && read_word(parser, "\\u")) {
 		int low = read_hex_digits(parser);
-		if (low < 0xDC00 || low > 0xDFFF)
+		if (low < FIRST_LOW_SURROGATE || low > LAST_LOW_SURROGATE)
 			return FALSE;
-		code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+		code = FIRST_PAIRED_CHARACTER + ((code - FIRST_HIGH_SURROGATE) << SURROGATE_BITS) + (low - FIRST_LOW_SURROGATE);
 	}
 	g_string_append_unichar(text, code);
 	return TRUE;
@@ -374,7 +390,7 @@ static void write_string(GString *output, const char *text) {
 		case '\r': g_string_append(output, "\\r"); break;
 		case '\t': g_string_append(output, "\\t"); break;
 		default:
-			if (*character < 0x20)
+			if (*character < FIRST_PLAIN_CHARACTER)
 				g_string_append_printf(output, "\\u%04x", *character);
 			else
 				g_string_append_c(output, (char)*character);
@@ -403,7 +419,7 @@ static void write_value(GString *output, const JsonValue *value, const char *ind
 	case JSON_NUMBER: {
 		char buffer[G_ASCII_DTOSTR_BUF_SIZE];
 		/* Whole numbers are written without a fraction, as protocol fields such as ids expect */
-		if (value->number == floor(value->number) && fabs(value->number) < 1e15)
+		if (value->number == floor(value->number) && fabs(value->number) < LARGEST_PLAIN_WHOLE_NUMBER)
 			g_string_append_printf(output, "%.0f", value->number);
 		else
 			g_string_append(output, g_ascii_dtostr(buffer, sizeof buffer, value->number));
