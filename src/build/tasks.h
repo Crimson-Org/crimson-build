@@ -5,6 +5,9 @@
 /* The folder in a project that keeps the task file and the scripts made from it */
 #define TASK_DIRECTORY ".crimson-build"
 #define TASK_FILE_NAME "tasks.json"
+/* The first lines of a task file, which say where its scripts come from */
+#define TASK_HEADER_FIRST "crimson-build writes each task as a .sh script for Linux and macOS and a .cmd script for"
+#define TASK_HEADER_SECOND "Windows in this folder, and those scripts run anywhere without Crimson Build."
 
 /* A task as the task menu lists it */
 typedef struct {

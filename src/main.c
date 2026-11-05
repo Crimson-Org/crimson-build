@@ -1,6 +1,4 @@
-/* Write the shell and Windows scripts of a project's tasks
- *
- */
+/* Write the shell and Windows scripts of a project's tasks */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,8 +6,6 @@
 #include <glib.h>
 
 #include "build/tasks.h"
-
-#define PROGRAM_VERSION "0.1.0"
 
 int main(int argument_count, char **arguments) {
 	gboolean should_print_version = FALSE;
@@ -36,5 +32,9 @@ int main(int argument_count, char **arguments) {
 		g_printerr("%s\n", error->message);
 		return EXIT_FAILURE;
 	}
+	g_autoptr(GPtrArray) tasks = read_task_list(project, NULL);
+	g_autofree char *folder = g_build_filename(project, TASK_DIRECTORY, NULL);
+	guint count = tasks ? tasks->len : 0;
+	g_print("Wrote the scripts of %u %s in %s\n", count, count == 1 ? "task" : "tasks", folder);
 	return EXIT_SUCCESS;
 }

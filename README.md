@@ -25,7 +25,8 @@ Add the repository as a submodule in `subprojects/crimson-build` and compile `sr
 ### The format
 
 A task is a list of steps, and `${NAME}` reads a variable.\
-Steps run shell commands, copy, move, remove, archive, extract, download or upload files, call other tasks, check that tools and libraries are installed, and build only the files that changed.
+Steps run shell commands, copy, move, remove, archive, extract, download or upload files, call other tasks, check that tools and libraries are installed, and build only the files that changed.\
+`"systems": ["unix"]` writes only the shell scripts, for a project that builds only on Linux and macOS.
 
 ### Scripts that stand alone
 

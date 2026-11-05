@@ -15,6 +15,8 @@
 #define LAST_LOW_SURROGATE 0xDFFF
 #define FIRST_PAIRED_CHARACTER 0x10000
 #define SURROGATE_BITS 10
+/* Stands in for half of a surrogate pair that has no other half, which UTF-8 cannot hold */
+#define REPLACEMENT_CHARACTER 0xFFFD
 /* Characters below a space must be escaped in JSON text */
 #define FIRST_PLAIN_CHARACTER 0x20
 /* Whole numbers below this are written exactly, while a double still holds every digit */
@@ -218,16 +220,28 @@ static int read_hex_digits(Parser *parser) {
 }
 
 
+static gboolean is_low_surrogate(int code) {
+	return code >= FIRST_LOW_SURROGATE && code <= LAST_LOW_SURROGATE;
+}
+
+
 /* Reads a \u escape, joining the two halves of a surrogate pair into one character */
 static gboolean read_unicode_escape(Parser *parser, GString *text) {
 	int code = read_hex_digits(parser);
 	if (code < 0)
 		return FALSE;
-	if (code >= FIRST_HIGH_SURROGATE && code <= LAST_HIGH_SURROGATE && read_word(parser, "\\u")) {
-		int low = read_hex_digits(parser);
-		if (low < FIRST_LOW_SURROGATE || low > LAST_LOW_SURROGATE)
-			return FALSE;
-		code = FIRST_PAIRED_CHARACTER + ((code - FIRST_HIGH_SURROGATE) << SURROGATE_BITS) + (low - FIRST_LOW_SURROGATE);
+	if (code >= FIRST_HIGH_SURROGATE && code <= LAST_HIGH_SURROGATE) {
+		const char *after_high = parser->position;
+		int low = read_word(parser, "\\u") ? read_hex_digits(parser) : -1;
+		if (is_low_surrogate(low)) {
+			code = FIRST_PAIRED_CHARACTER + ((code - FIRST_HIGH_SURROGATE) << SURROGATE_BITS) + (low - FIRST_LOW_SURROGATE);
+		} else {
+			/* What follows the lone half is read again as itself */
+			parser->position = after_high;
+			code = REPLACEMENT_CHARACTER;
+		}
+	} else if (is_low_surrogate(code)) {
+		code = REPLACEMENT_CHARACTER;
 	}
 	g_string_append_unichar(text, code);
 	return TRUE;
@@ -253,6 +267,9 @@ static char *parse_string_text(Parser *parser) {
 		if (escape == 'u') {
 			if (!read_unicode_escape(parser, text))
 				return fail(parser, "Broken \\u escape");
+			/* The text is handed on as a C string, which a zero would cut short */
+			if (text->len && text->str[text->len - 1] == '\0')
+				return fail(parser, "A string holds the character \\u0000");
 		} else if (found && (found - ESCAPES) % 2 == 0) {
 			g_string_append_c(text, found[1]);
 		} else {
@@ -266,13 +283,49 @@ static char *parse_string_text(Parser *parser) {
 }
 
 
+static const char *skip_digits(const char *position, const char *end) {
+	while (position < end && g_ascii_isdigit(*position))
+		position++;
+	return position;
+}
+
+
+/* Finds where a number in JSON's own form ends, such as -12.5e3, and returns NULL for anything else, such as NaN or
+ * hex, which other readers would refuse */
+static const char *find_number_end(const char *position, const char *end) {
+	if (position < end && *position == '-')
+		position++;
+	const char *digits = position;
+	position = skip_digits(position, end);
+	if (position == digits || (*digits == '0' && position - digits > 1))
+		return NULL;
+	if (position < end && *position == '.') {
+		const char *fraction = ++position;
+		position = skip_digits(position, end);
+		if (position == fraction)
+			return NULL;
+	}
+	if (position < end && (*position == 'e' || *position == 'E')) {
+		position++;
+		if (position < end && (*position == '+' || *position == '-'))
+			position++;
+		const char *exponent = position;
+		position = skip_digits(position, end);
+		if (position == exponent)
+			return NULL;
+	}
+	return position;
+}
+
+
 static JsonValue *parse_number(Parser *parser) {
-	char *number_end = NULL;
-	double number = g_ascii_strtod(parser->position, &number_end);
-	if (number_end == parser->position || number_end > parser->end)
+	const char *number_end = find_number_end(parser->position, parser->end);
+	if (!number_end)
 		return fail(parser, "Unexpected character");
+	/* The text need not end in a zero, so the number is read from its own copy */
+	g_autofree char *number = g_strndup(parser->position, number_end - parser->position);
 	parser->position = number_end;
-	return new_json_number(number);
+	return new_json_number(g_ascii_strtod(number, NULL));
 }
 
 
