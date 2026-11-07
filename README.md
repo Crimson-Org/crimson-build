@@ -1,5 +1,6 @@
 <h1 align="center">Crimson Build</h1>
-<p align="center">A command line tool and C library that turns Crimson <code>tasks.json</code> files into shell and Windows scripts that run anywhere.</p>
+<p align="center">A build script generator and C library.<br>
+Turn a <code>tasks.json</code> file into shell and Windows build scripts.</p>
 
 <p align="center">
   <a href="https://github.com/Crimson-Org/crimson-build/releases/latest"><b>Download Here!</b></a>
