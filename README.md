@@ -7,8 +7,8 @@
 
 ## Why
 
-Most projects need their build tool installed first.\
-Crimson Build writes plain scripts instead, so you only need a shell, a compiler and the project's libraries.
+Crimson Build writes plain scripts, so building a project needs only a shell, a compiler and the project's libraries.\
+The scripts work without Crimson Build installed.
 
 ## About
 
@@ -28,10 +28,6 @@ A task is a list of steps, and `${NAME}` reads a variable.\
 Steps run shell commands, copy, move, remove, archive, extract, download or upload files, call other tasks, check that tools and libraries are installed, and build only the files that changed.\
 `"systems": ["unix"]` writes only the shell scripts, for a project that builds only on Linux and macOS.
 
-### Scripts that stand alone
-
-The scripts work without Crimson Build.
-
 ## Example
 
 This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs the program.
@@ -43,7 +39,7 @@ This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs 
 		"build": {
 			"description": "Build hello",
 			"steps": [
-				{"needs": ["cc", "make"]},
+				{"needs": ["cc"]},
 				{"each": {"from": "src/*.c", "to": "build/{id}.o", "run": "cc -c {from} -o {to}"}},
 				"cc -o ${PROGRAM} build/*.o"
 			]
@@ -62,7 +58,7 @@ This `.crimson-build/tasks.json` builds every `src/*.c` into a program and runs 
 
 ## Building
 
-You need a C compiler, make, pkg-config and the GLib development files.
+You need a C compiler, pkg-config and the GLib development files.
 
 Steps:
  1. Clone using `git clone https://github.com/Crimson-Org/crimson-build`
